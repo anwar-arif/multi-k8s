@@ -1,0 +1,63 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+env:
+  GITHUB_WORKSPACE: /home/runner/work/multi-docker/multi-docker
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v2
+      - name: build docker image
+        run: |
+          docker build -t anr35/react-test -f ./client/Dockerfile.dev ./client
+      - name: run tests for react app
+        run: |
+          docker run -e CI=true anr35/react-test npm test -- --coverage
+  upload_image:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v2
+      - name: build images
+        run: |
+          docker build -t anr35/multi-client ./client
+          docker build -t anr35/multi-nginx ./nginx
+          docker build -t anr35/multi-server ./server
+          docker build -t anr35/multi-worker ./worker
+      - name: docker login
+        env:
+          DOCKER_USER: ${{secrets.DOCKER_ID}}
+          DOCKER_PASSWORD: ${{secrets.DOCKER_PASSWORD}}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u $DOCKER_USER --password-stdin
+      - name: push to docker hub
+        run: |
+          docker push anr35/multi-client
+          docker push anr35/multi-nginx
+          docker push anr35/multi-server
+          docker push anr35/multi-worker
+  deploy:
+    needs: upload_image
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v2
+      - name: generate deployment package
+        run: zip -r deploy.zip docker-compose.yml
+      - name: deploy to beanstalk
+        uses: einaregilsson/beanstalk-deploy@v21
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_KEY }}
+          application_name: multi-docker
+          environment_name: Multidocker-env
+          version_label: multi-docker-${{github.sha}}
+          region: ap-southeast-1
+          deployment_package: deploy.zip
