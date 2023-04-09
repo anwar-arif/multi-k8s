@@ -6,7 +6,9 @@ on:
   pull_request:
     branches: [ master ]
 env:
-  GITHUB_WORKSPACE: /home/runner/work/multi-docker/multi-docker
+  GKE_PROJECT_ID: ${{ secrets.GKE_PROJECT_ID }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  GKE_ZONE: ${{ secrets.GKE_ZONE }}
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,7 +30,6 @@ jobs:
       - name: build images
         run: |
           docker build -t anr35/multi-client ./client
-          docker build -t anr35/multi-nginx ./nginx
           docker build -t anr35/multi-server ./server
           docker build -t anr35/multi-worker ./worker
       - name: docker login
@@ -40,7 +41,6 @@ jobs:
       - name: push to docker hub
         run: |
           docker push anr35/multi-client
-          docker push anr35/multi-nginx
           docker push anr35/multi-server
           docker push anr35/multi-worker
   deploy:
@@ -49,15 +49,25 @@ jobs:
     steps:
       - name: checkout repository
         uses: actions/checkout@v2
-      - name: generate deployment package
-        run: zip -r deploy.zip docker-compose.yml
-      - name: deploy to beanstalk
-        uses: einaregilsson/beanstalk-deploy@v21
+      
+      - name: setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@94337306dda8180d967a56932ceb4ddcf01edae7
         with:
-          aws_access_key: ${{ secrets.AWS_ACCESS_KEY }}
-          aws_secret_key: ${{ secrets.AWS_SECRET_KEY }}
-          application_name: multi-docker
-          environment_name: Multidocker-env
-          version_label: multi-docker-${{github.sha}}
-          region: ap-southeast-1
-          deployment_package: deploy.zip
+          service-account-key: $GKE_SA_KEY
+          project_id: $GKE_PROJECT_ID
+      
+      - name: configure docker to use gcloud CLI as credential helper for authentication
+        run: |
+          gcloud --quiet auth configure-docker
+      
+      - name: get GKE credentials
+        uses: google-github-actions/get-gke-credentials@fb08709ba27618c31c09e014e1d8364b02e5042e
+        with:
+          cluster_name: $GKE_CLUSTER
+          location: $GKE_ZONE
+          credentials: $GKE_SA_KEY
+
+      - name: deploy to GKE cluster
+        run: |
+          kubectl apply -f k8s
+      
